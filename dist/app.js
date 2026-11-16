@@ -85,6 +85,7 @@ function renderSlot(index) {
   $('count').textContent = count;
   $('save').disabled = $('print').disabled = count === 0 || exporting;
   $('save-project').disabled = projectBusy;
+  $('reset-project').disabled = count === 0 || exporting || projectBusy;
 }
 
 for (let i = 0; i < 35; i++) {
@@ -142,6 +143,21 @@ $('save-project').addEventListener('click', () => {
   } catch (error) { console.error(error); notify('プロジェクトを保存できませんでした。'); }
 });
 $('open-project').addEventListener('click', () => { $('project-file').value = ''; $('project-file').click(); });
+$('reset-project').addEventListener('click', () => {
+  if (projectBusy || exporting || !slots.some(Boolean)) return;
+  if (!window.confirm('すべての画像と配置を初期化します。未保存の編集内容は失われます。初期化しますか？')) return;
+  ++loadSequence;
+  current = uploadIndex = -1;
+  draft = drag = null;
+  if (editor.open) editor.close('reset');
+  slots.fill(null);
+  $('file').value = $('project-file').value = '';
+  $('print-sheet').removeAttribute('src');
+  crop.getContext('2d').clearRect(0, 0, crop.width, crop.height);
+  slots.forEach((_, index) => renderSlot(index));
+  buttons[0].focus();
+  notify('すべての画像と配置を初期化しました。');
+});
 $('project-file').addEventListener('change', async () => {
   const file = $('project-file').files[0];
   if (!file || projectBusy) return;
@@ -166,6 +182,7 @@ $('project-file').addEventListener('change', async () => {
     projectBusy = false;
     document.querySelector('.workspace').inert = false;
     $('save-project').disabled = false;
+    $('reset-project').disabled = exporting || !slots.some(Boolean);
   }
 });
 
@@ -215,7 +232,7 @@ function sheetCanvas() {
 
 async function exportSheet(print) {
   if (exporting || !slots.some(Boolean)) return;
-  exporting = true; $('save').disabled = $('print').disabled = true;
+  exporting = true; $('save').disabled = $('print').disabled = $('reset-project').disabled = true;
   try {
     const canvas = sheetCanvas();
     if (print) {
@@ -229,7 +246,7 @@ async function exportSheet(print) {
       notify('印刷用 PNG を書き出しました。印刷倍率は「100% / 実際のサイズ」に設定してください。');
     }
   } catch (error) { console.error(error); notify('書き出しに失敗しました。もう一度お試しください。'); }
-  finally { exporting = false; $('save').disabled = $('print').disabled = !slots.some(Boolean); }
+  finally { exporting = false; $('save').disabled = $('print').disabled = !slots.some(Boolean); $('reset-project').disabled = projectBusy || !slots.some(Boolean); }
 }
 $('save').addEventListener('click', () => exportSheet(false));
 $('print').addEventListener('click', () => exportSheet(true));
