@@ -12,6 +12,16 @@ npm run dev
 
 http://localhost:5173 を開いてください。`dist/` はそのまま静的ホスティングにも配置できます。
 
+## GitHub Pages
+
+リポジトリ: https://github.com/m-tkg/AstronautsResinImages （非公開）
+
+`.github/workflows/pages.yml` により、`master` への push 時にテストし、`dist/` のみを GitHub Pages にデプロイします。手動実行にも対応しています。
+
+非公開リポジトリでの GitHub Pages 利用には GitHub Pro 以上の対応プランが必要です。初期設定時点では GitHub API がプラン非対応（HTTP 422）を返したため、サイトは未公開です。対応プランへの変更後、Settings → Pages → Build and deployment → Source で GitHub Actions を選択し、Deploy GitHub Pages ワークフローを手動実行してください。
+
+公開後の URL は https://m-tkg.github.io/AstronautsResinImages/ です。リポジトリを非公開にしても、通常の GitHub Pages サイトはインターネットへ公開されます。選択した画像は引き続きブラウザ内だけで処理されます。
+
 ## 操作
 
 1. シートの円をクリックし、JPEG・PNG・WebP などブラウザ対応の画像を選びます。
