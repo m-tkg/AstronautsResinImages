@@ -1,4 +1,5 @@
 import { SHEET, circleAt, imagePlacement, withPrintResolution } from './layout.js';
+import { serializeProject, restoreProject } from './project.js';
 
 const $ = (id) => document.getElementById(id);
 const slots = Array.from({ length: 35 }, () => null);
@@ -10,6 +11,7 @@ let loadSequence = 0;
 let drag = null;
 let statusTimer;
 let exporting = false;
+let projectBusy = false;
 const editor = $('editor');
 const crop = $('crop');
 
@@ -82,6 +84,7 @@ function renderSlot(index) {
   const count = slots.filter(Boolean).length;
   $('count').textContent = count;
   $('save').disabled = $('print').disabled = count === 0 || exporting;
+  $('save-project').disabled = projectBusy;
 }
 
 for (let i = 0; i < 35; i++) {
@@ -101,16 +104,69 @@ $('file').addEventListener('change', async () => {
   if (!file) return;
   const target = uploadIndex;
   const sequence = ++loadSequence;
-  const url = URL.createObjectURL(file);
   try {
+    let dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
     const image = new Image();
-    image.src = url;
+    image.src = dataUrl;
     await image.decode();
     if (sequence !== loadSequence) return;
-    openEditor(target, { image, zoom: 1, x: 0, y: 0 });
+    if (!/^data:image\//i.test(dataUrl)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+      canvas.getContext('2d').drawImage(image, 0, 0);
+      dataUrl = canvas.toDataURL('image/png');
+    }
+    openEditor(target, { image, name: file.name, width: image.naturalWidth, height: image.naturalHeight, dataUrl, zoom: 1, x: 0, y: 0 });
   } catch {
     notify('画像を読み込めませんでした。JPEG・PNG・WebP などの画像を選んでください。');
-  } finally { URL.revokeObjectURL(url); }
+  }
+});
+
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = filename;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+$('save-project').addEventListener('click', () => {
+  try {
+    download(new Blob([serializeProject(slots)], { type: 'application/json' }), 'astronauts.astronauts.json');
+    notify('画像と編集内容をプロジェクトに保存しました。「プロジェクトを開く」から再編集できます。');
+  } catch (error) { console.error(error); notify('プロジェクトを保存できませんでした。'); }
+});
+$('open-project').addEventListener('click', () => { $('project-file').value = ''; $('project-file').click(); });
+$('project-file').addEventListener('change', async () => {
+  const file = $('project-file').files[0];
+  if (!file || projectBusy) return;
+  projectBusy = true;
+  document.querySelector('.workspace').inert = true;
+  notify('プロジェクトを読み込んでいます…');
+  try {
+    const restored = await restoreProject(await file.text(), async (record) => {
+      const image = new Image(); image.src = record.dataUrl; await image.decode(); return image;
+    });
+    if (slots.some(Boolean) && !window.confirm('現在の配置を、選択したプロジェクトの内容に置き換えます。未保存の変更は失われます。開きますか？')) {
+      notify('読み込みをキャンセルしました。'); return;
+    }
+    ++loadSequence;
+    slots.splice(0, slots.length, ...restored);
+    slots.forEach((_, index) => renderSlot(index));
+    notify('プロジェクトを開きました。画像をクリックすると続きから編集できます。');
+  } catch (error) {
+    console.error(error);
+    notify('プロジェクトを読み込めませんでした。対応するファイルか確認してください。現在の配置は変更していません。');
+  } finally {
+    projectBusy = false;
+    document.querySelector('.workspace').inert = false;
+    $('save-project').disabled = false;
+  }
 });
 
 $('replace').addEventListener('click', () => chooseFile(current));
@@ -169,9 +225,7 @@ async function exportSheet(print) {
     } else {
       const blob = await new Promise((resolve, reject) => canvas.toBlob((b) => b ? resolve(b) : reject(new Error('PNG を作成できませんでした')), 'image/png'));
       const bytes = withPrintResolution(new Uint8Array(await blob.arrayBuffer()), SHEET.dpi);
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
-      const link = document.createElement('a'); link.href = url; link.download = 'astronauts-A4-300dpi.png'; document.body.append(link); link.click(); link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      download(new Blob([bytes], { type: 'image/png' }), 'astronauts-A4-300dpi.png');
       notify('印刷用 PNG を書き出しました。印刷倍率は「100% / 実際のサイズ」に設定してください。');
     }
   } catch (error) { console.error(error); notify('書き出しに失敗しました。もう一度お試しください。'); }

@@ -34,6 +34,8 @@ test('復元は全画像の読み込み成功後に返し、途中失敗では�
   assert.equal(restored[6].image.naturalWidth, 600);
   assert.equal(restored[34].zoom, 2.37);
   let count = 0;
-  await assert.rejects(restoreProject(serializeProject(existing), async () => { if (++count === 2) throw new Error('decode failed'); return {}; }));
+  await assert.rejects(restoreProject(serializeProject(existing), async (record) => { if (++count === 2) throw new Error('decode failed'); return { naturalWidth: record.width, naturalHeight: record.height }; }));
+  assert.equal(count, 2);
+  await assert.rejects(restoreProject(serializeProject(existing), async () => ({ naturalWidth: 1, naturalHeight: 1 })));
   assert.deepEqual(existing, slots());
 });
