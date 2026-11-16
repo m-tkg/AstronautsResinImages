@@ -4,3 +4,5 @@
 .project-card{display:grid;gap:12px}.project-card .eyebrow{margin:0}.project-card h2{margin-bottom:4px}.project-card .spec-note{margin-top:4px}@media(max-width:650px){.project-card{grid-column:1/-1}}
 
 .reset-project{color:#a8675b}.reset-project:hover:not(:disabled){background:#fbf0ed;border-color:#e4c6bd}
+
+.assets-description{font-size:12px;line-height:1.9;color:#778078}#assets-names{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;background:#f1f5ee;padding:16px;border-radius:8px;font-size:11px;line-height:1.9}#assets-error{color:#a8675b;font-size:12px;overflow-wrap:anywhere}#assets-dialog .button{width:100%;margin-top:10px}

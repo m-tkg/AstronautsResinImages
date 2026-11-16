@@ -6,3 +6,4 @@ node_modules/
 *.[pP][sS][dDbB]
 *.astronauts.json
 astronauts-A4-*.png
+local-projects/

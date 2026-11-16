@@ -1,5 +1,5 @@
 import { SHEET, circleAt, imagePlacement, withPrintResolution } from './layout.js';
-import { serializeProject, restoreProject } from './project.js';
+import { serializeProject, parseProject, restoreProject, matchProjectFiles } from './project.js';
 
 const $ = (id) => document.getElementById(id);
 const slots = Array.from({ length: 35 }, () => null);
@@ -12,6 +12,8 @@ let drag = null;
 let statusTimer;
 let exporting = false;
 let projectBusy = false;
+let pendingProject = null;
+const fingerprintCache = new WeakMap();
 const editor = $('editor');
 const crop = $('crop');
 
@@ -55,6 +57,25 @@ function chooseFile(index) {
   uploadIndex = index;
   $('file').value = '';
   $('file').click();
+}
+
+async function fingerprint(file) {
+  if (!fingerprintCache.has(file)) fingerprintCache.set(file, (async () => {
+    const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+    return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+  })());
+  return fingerprintCache.get(file);
+}
+
+async function decodeFile(file) {
+  const url = URL.createObjectURL(file);
+  try { const image = new Image(); image.src = url; await image.decode(); return image; }
+  finally { URL.revokeObjectURL(url); }
+}
+
+function embeddedFile(record) {
+  const [header, body] = record.dataUrl.split(',');
+  return new File([Uint8Array.from(atob(body), c => c.charCodeAt(0))], record.name, { type: header.slice(5, header.indexOf(';')) });
 }
 
 function openEditor(index, record) {
@@ -106,23 +127,10 @@ $('file').addEventListener('change', async () => {
   const target = uploadIndex;
   const sequence = ++loadSequence;
   try {
-    let dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-    const image = new Image();
-    image.src = dataUrl;
-    await image.decode();
+    const image = await decodeFile(file);
+    const sha256 = await fingerprint(file);
     if (sequence !== loadSequence) return;
-    if (!/^data:image\//i.test(dataUrl)) {
-      const canvas = document.createElement('canvas');
-      canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
-      canvas.getContext('2d').drawImage(image, 0, 0);
-      dataUrl = canvas.toDataURL('image/png');
-    }
-    openEditor(target, { image, name: file.name, width: image.naturalWidth, height: image.naturalHeight, dataUrl, zoom: 1, x: 0, y: 0 });
+    openEditor(target, { image, file, sha256, name: file.name, width: image.naturalWidth, height: image.naturalHeight, zoom: 1, x: 0, y: 0 });
   } catch {
     notify('画像を読み込めませんでした。JPEG・PNG・WebP などの画像を選んでください。');
   }
@@ -139,7 +147,7 @@ function download(blob, filename) {
 $('save-project').addEventListener('click', () => {
   try {
     download(new Blob([serializeProject(slots)], { type: 'application/json' }), 'astronauts.astronauts.json');
-    notify('画像と編集内容をプロジェクトに保存しました。「プロジェクトを開く」から再編集できます。');
+    notify('配置と画像ファイル情報を保存しました。元画像も一緒に保管してください。');
   } catch (error) { console.error(error); notify('プロジェクトを保存できませんでした。'); }
 });
 $('open-project').addEventListener('click', () => { $('project-file').value = ''; $('project-file').click(); });
@@ -158,33 +166,66 @@ $('reset-project').addEventListener('click', () => {
   buttons[0].focus();
   notify('すべての画像と配置を初期化しました。');
 });
-$('project-file').addEventListener('change', async () => {
-  const file = $('project-file').files[0];
-  if (!file || projectBusy) return;
+async function importProject(text, files = []) {
+  if (projectBusy) return;
   projectBusy = true;
   document.querySelector('.workspace').inert = true;
+  $('select-assets').disabled = true;
   notify('プロジェクトを読み込んでいます…');
   try {
-    const restored = await restoreProject(await file.text(), async (record) => {
-      const image = new Image(); image.src = record.dataUrl; await image.decode(); return image;
+    const records = parseProject(text);
+    const matched = await matchProjectFiles(records, files, fingerprint);
+    const sources = [];
+    const restored = await restoreProject(text, async (record) => {
+      const file = record.dataUrl ? embeddedFile(record) : matched.get(record.sha256);
+      const image = await decodeFile(file);
+      sources.push({ file, sha256: record.sha256 || await fingerprint(file) });
+      return image;
     });
     if (slots.some(Boolean) && !window.confirm('現在の配置を、選択したプロジェクトの内容に置き換えます。未保存の変更は失われます。開きますか？')) {
+      if ($('assets-dialog').open) $('assets-dialog').close();
       notify('読み込みをキャンセルしました。'); return;
     }
     ++loadSequence;
+    let index = 0;
+    for (const record of restored) if (record) Object.assign(record, sources[index++]);
     slots.splice(0, slots.length, ...restored);
     slots.forEach((_, index) => renderSlot(index));
+    if ($('assets-dialog').open) $('assets-dialog').close();
     notify('プロジェクトを開きました。画像をクリックすると続きから編集できます。');
   } catch (error) {
     console.error(error);
-    notify('プロジェクトを読み込めませんでした。対応するファイルか確認してください。現在の配置は変更していません。');
+    if ($('assets-dialog').open) $('assets-error').textContent = error.missingImages ? error.message : '画像を読み込めませんでした。元の画像ファイルを選んでください。現在の配置は変更していません。';
+    notify('プロジェクトを読み込めませんでした。現在の配置は変更していません。');
   } finally {
     projectBusy = false;
     document.querySelector('.workspace').inert = false;
+    $('select-assets').disabled = false;
     $('save-project').disabled = false;
     $('reset-project').disabled = exporting || !slots.some(Boolean);
   }
+}
+$('project-file').addEventListener('change', async () => {
+  const file = $('project-file').files[0];
+  if (!file || projectBusy) return;
+  try {
+    const text = await file.text();
+    const records = parseProject(text);
+    const references = records.filter(r => r && !r.dataUrl);
+    if (!references.length) { await importProject(text); return; }
+    pendingProject = { text, files: [] };
+    $('assets-names').textContent = [...new Set(references.map(r => r.name))].join('\n');
+    $('assets-error').textContent = '';
+    $('assets-dialog').showModal();
+  } catch { notify('対応するプロジェクトファイルを選んでください。現在の配置は変更していません。'); }
 });
+$('select-assets').addEventListener('click', () => { $('asset-files').value = ''; $('asset-files').click(); });
+$('asset-files').addEventListener('change', async () => {
+  if (!pendingProject || !$('asset-files').files.length || projectBusy) return;
+  pendingProject.files.push(...$('asset-files').files);
+  await importProject(pendingProject.text, pendingProject.files);
+});
+$('assets-dialog').addEventListener('close', () => { pendingProject = null; });
 
 $('replace').addEventListener('click', () => chooseFile(current));
 $('reset').addEventListener('click', () => { draft.zoom = 1; draft.x = draft.y = 0; updateEditor(); });
