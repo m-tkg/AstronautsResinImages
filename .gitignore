@@ -3,3 +3,6 @@
 node_modules/
 *.tar.gz
 *.zip
+*.[pP][sS][dDbB]
+*.astronauts.json
+astronauts-A4-*.png
