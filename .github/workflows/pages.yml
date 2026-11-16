@@ -37,8 +37,39 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Check Pages availability
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+
+          const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/pages`, {
+            headers: {
+              Authorization: `Bearer ${process.env.GH_TOKEN}`,
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+          });
+          let enabled = false;
+          if (response.status === 404) {
+            console.log('::warning::GitHub Pages is not configured. Deployment skipped. Enable Pages with GitHub Actions after switching to a plan that supports private repositories.');
+          } else {
+            if (!response.ok) throw new Error(`Pages availability check failed: HTTP ${response.status}`);
+            const pages = await response.json();
+            enabled = pages.build_type === 'workflow';
+            if (!enabled) console.log('::warning::Set the Pages publishing source to GitHub Actions. Deployment skipped.');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `enabled=${enabled}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, enabled
+            ? '### GitHub Pages\nPages is enabled. Deploying the tested application.\n'
+            : '### GitHub Pages: deployment skipped\nTests and artifact packaging succeeded. The site has **not** been published. Enable Pages and select **GitHub Actions** in Settings → Pages, then rerun this workflow. Private repositories require a supported paid plan.\n');
+          NODE
       - name: Configure GitHub Pages
+        if: steps.pages.outputs.enabled == 'true'
         uses: actions/configure-pages@v6.0.0
       - name: Deploy static application
+        if: steps.pages.outputs.enabled == 'true'
         id: deployment
         uses: actions/deploy-pages@v5.0.1
